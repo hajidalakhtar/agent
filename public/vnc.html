@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Sandbox VNC</title>
+  <style>
+    :root{--yellow:#FFEB3B;--red:#FF5252;--blue:#2196F3;--black:#000;--white:#fff;--bg:#FFFDF5}
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--black);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;-webkit-font-smoothing:antialiased}
+    .bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border-bottom:3px solid var(--black);background:var(--yellow);position:sticky;top:0;z-index:10}
+    .meta{display:flex;flex-direction:column;min-width:0;margin-right:2px;padding:4px 10px;background:var(--white);border:3px solid var(--black);border-radius:8px;box-shadow:3px 3px 0 var(--black)}
+    .meta .label{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:rgba(0,0,0,.7);line-height:1.1}
+    .meta .name{font-size:15px;font-weight:800;letter-spacing:-0.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:30vw}
+    .btn{appearance:none;background:var(--white);color:var(--black);border:3px solid var(--black);border-radius:8px;padding:7px 13px;cursor:pointer;font:800 12px/1.1 inherit;box-shadow:4px 4px 0 var(--black);transition:transform .08s,box-shadow .08s}
+    .btn:hover{transform:translate(2px,2px);box-shadow:2px 2px 0 var(--black)}
+    .btn:active{transform:translate(4px,4px);box-shadow:none}
+    .btn.primary{background:var(--blue);color:var(--black)}
+    .btn.danger{background:var(--red)}
+    .spacer{flex:1}
+    .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;background:var(--white);border:3px solid var(--black);border-radius:999px;box-shadow:3px 3px 0 var(--black);font-size:12px;font-weight:800;max-width:40vw}
+    .dot{width:10px;height:10px;border-radius:50%;border:2px solid var(--black);background:#d4d4d4;flex:0 0 auto}
+    .dot.ok{background:#22c55e} .dot.err{background:var(--red)} .dot.busy{background:#f59e0b}
+    #statusText{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    #tsinfo{font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:22vw;padding:4px 8px;background:var(--white);border:2px solid var(--black);border-radius:6px}
+    #screenWrap{position:fixed;inset:72px 0 0 0;background:#111;border-top:3px solid var(--black);overflow:hidden}
+    #screen{position:absolute;inset:0}
+    #screen > div{width:100% !important;height:100% !important}
+    #overlay{position:absolute;inset:0;display:grid;place-items:center;padding:20px;pointer-events:none;background:rgba(255,253,245,.55)}
+    #overlay .card{pointer-events:auto;max-width:560px;width:100%;background:var(--white);border:3px solid var(--black);border-radius:10px;padding:18px 20px;box-shadow:6px 6px 0 var(--black)}
+    #overlay h3{margin:0 0 6px;font-size:18px;font-weight:900;letter-spacing:-0.02em}
+    #overlay p{margin:6px 0;color:rgba(0,0,0,.85);font-size:14px;line-height:1.5;font-weight:500}
+    #overlay .hint{margin-top:12px;padding:10px 12px;background:var(--yellow);border:2px solid var(--black);border-radius:8px;font-size:12px;font-weight:700}
+    code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;background:var(--yellow);border:2px solid var(--black);padding:1px 6px;border-radius:5px;color:var(--black);font-size:12px;font-weight:700}
+    @media (max-width:720px){.meta .name{max-width:42vw}.bar{gap:8px;padding:8px}.pill{max-width:100%;order:10;width:100%;justify-content:center}#screenWrap{inset:112px 0 0 0}}
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <div class="meta">
+      <span class="label">Sandbox VNC</span>
+      <strong class="name" id="title">VNC</strong>
+    </div>
+    <button class="btn primary" id="connect">Connect</button>
+    <button class="btn danger" id="disconnect">Disconnect</button>
+    <button class="btn" id="ctrlaltdel">Ctrl+Alt+Del</button>
+    <button class="btn" id="fullscreen">Fullscreen</button>
+    <span class="spacer"></span>
+    <span id="tsinfo"></span>
+    <div class="pill"><span class="dot" id="dot"></span><span id="statusText">ready</span></div>
+  </div>
+  <div id="screenWrap">
+    <div id="screen"></div>
+    <div id="overlay"><div class="card">
+      <h3 id="ovTitle">Hubungkan ke VNC</h3>
+      <p id="ovText">Viewer ini pakai <b>noVNC (RFB)</b> lewat proxy WebSocket server ke Instabox. Pastikan sandbox <b>running</b>.</p>
+      <p class="hint">Force takeover aktif: koneksi baru otomatis menggantikan sesi VNC lama. Kalau gagal, cek status sandbox & event server.</p>
+    </div></div>
+  </div>
+
+  <script type="module">
+    import RFB from 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.7.0/core/rfb.js/+esm';
+
+    const params = new URLSearchParams(location.search);
+    const name = params.get('name') || '';
+    document.getElementById('title').textContent = name || '(unknown)';
+    document.title = (name ? `VNC · ${name}` : 'Sandbox VNC');
+    const statusEl = document.getElementById('statusText');
+    const dot = document.getElementById('dot');
+    const tsInfoEl = document.getElementById('tsinfo');
+    const overlay = document.getElementById('overlay');
+    const ovTitle = document.getElementById('ovTitle');
+    const ovText = document.getElementById('ovText');
+    const screen = document.getElementById('screen');
+    let rfb = null;
+
+    async function loadInfo() {
+      try {
+        const r = await fetch(`/api/sandboxes/${encodeURIComponent(name)}/vnc`);
+        const j = await r.json();
+        if (j && j.ok === false && j.message) tsInfoEl.textContent = j.message;
+        else tsInfoEl.textContent = '';
+      } catch (e) { /* non-fatal */ }
+    }
+
+    function setStatus(s, mode='idle', showOverlay=false, title=null, text=null) {
+      statusEl.textContent = s;
+      dot.className = 'dot' + (mode === 'ok' ? ' ok' : mode === 'err' ? ' err' : mode === 'busy' ? ' busy' : '');
+      overlay.style.display = showOverlay ? 'grid' : 'none';
+      if (title) ovTitle.textContent = title;
+      if (text) ovText.innerHTML = text;
+      console.log('[vnc]', s);
+    }
+
+    function wsUrl() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const force = params.get('force') === '0' ? '0' : '1'; // default: always takeover
+      return `${proto}//${location.host}/vnc-proxy?name=${encodeURIComponent(name)}&force=${force}`;
+    }
+
+    function connect() {
+      if (!name) return setStatus('nama sandbox kosong', 'err', true, 'Nama sandbox kosong', 'Buka dengan parameter <code>?name=&lt;sandbox&gt;</code>.');
+      disconnect();
+      setStatus('menghubungkan…', 'busy', true, 'Menghubungkan…', 'Membuka sesi RFB WebSocket lewat proxy server (force takeover aktif).');
+      try {
+        rfb = new RFB(screen, wsUrl(), { wsProtocols: ['binary'] });
+        rfb.scaleViewport = true;
+        rfb.resizeSession = false;
+        rfb.clipViewport = false;
+        rfb.background = '#111111';
+        rfb.addEventListener('connect', () => setStatus('terhubung', 'ok', false));
+        rfb.addEventListener('disconnect', (e) => {
+          const clean = e?.detail?.clean;
+          const detail = String(e?.detail?.reason || e?.detail?.status || '').trim();
+          setStatus(clean ? 'terputus' : 'terputus (tidak normal)', clean ? 'idle' : 'err', true,
+            clean ? 'Terputus' : 'Koneksi terputus',
+            `Koneksi VNC ${clean ? 'ditutup' : 'terputus secara tidak normal'}. Klik <b>Connect</b> untuk menyambung lagi. Pastikan sandbox <b>running</b> dan desktop/VNC tersedia.${detail ? `<br><br><span style="font-size:12px;font-weight:700">Detail: <code>${detail}</code></span>` : ''}`
+          );
+        });
+        rfb.addEventListener('securityfailure', (e) => {
+          const detail = String(e?.detail?.reason || e?.detail?.status || JSON.stringify(e?.detail || {}));
+          setStatus('security failure', 'err', true, 'Security failure', `<code>${detail}</code>`);
+        });
+        rfb.addEventListener('credentialsrequired', () => {
+          setStatus('password diperlukan', 'err', true, 'Password diperlukan', 'Server VNC meminta kredensial. Viewer ini belum mendukung input password.');
+        });
+        rfb.addEventListener('serververification', (e) => {
+          if (e?.detail && typeof e.detail.approve === 'function') e.detail.approve();
+        });
+      } catch (err) {
+        setStatus('gagal connect', 'err', true, 'Gagal connect', `<code>${err.message}</code>`);
+      }
+    }
+
+    function disconnect() {
+      try { if (rfb) { rfb.disconnect(); rfb = null; } } catch {}
+    }
+
+    document.getElementById('connect').onclick = connect;
+    document.getElementById('disconnect').onclick = () => { disconnect(); setStatus('terputus oleh pengguna', 'idle', true, 'Terputus', 'Klik <b>Connect</b> untuk menyambung lagi.'); };
+    document.getElementById('ctrlaltdel').onclick = () => { try { rfb && rfb.sendCtrlAltDel(); } catch {} };
+    document.getElementById('fullscreen').onclick = () => {
+      const el = document.getElementById('screenWrap');
+      (el.requestFullscreen || document.body.requestFullscreen).call(el);
+    };
+    window.addEventListener('resize', () => { try { rfb && rfb.scaleViewport && (rfb.scaleViewport = true); } catch {} });
+
+    if (name) { loadInfo().finally(connect); }
+    else setStatus('nama sandbox kosong', 'err', true, 'Nama sandbox kosong', 'Buka dengan parameter <code>?name=&lt;sandbox&gt;</code>.');
+  </script>
+</body>
+</html>

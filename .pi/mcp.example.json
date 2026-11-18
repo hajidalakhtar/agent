@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "otak": {
+      "url": "http://127.0.0.1:4173/mcp",
+      "headers": { "Authorization": "Bearer ${OTAK_API_KEY}" },
+      "description": "Mem0 long-term memory (OSS + MongoDB Atlas) via Otak REST API",
+      "exposure": "direct",
+      "timeout": 120
+    }
+  }
+}
